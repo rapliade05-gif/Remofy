@@ -1,41 +1,86 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
+import { StoreDetails } from "../types";
 
-export const removeBackground = async (imageBase64: string, mimeType: string): Promise<string> => {
-  // Use process.env.API_KEY as per instructions
+const MAPS_LINK = "https://maps.app.goo.gl/FCYDmLVP6L3A57H69";
+
+export const fetchStoreData = async (): Promise<StoreDetails> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
   
   try {
+    const prompt = `
+      Informasi detail tentang toko/bisnis di tautan ini: ${MAPS_LINK}. 
+      Tolong berikan:
+      1. Nama Bisnis
+      2. Alamat Lengkap
+      3. Rating dan jumlah ulasan
+      4. Kategori bisnis
+      5. Deskripsi menarik tentang apa yang mereka jual atau layanan mereka dalam Bahasa Indonesia.
+      6. Beberapa ulasan pelanggan jika tersedia.
+      7. Jam operasional jika tersedia.
+      
+      Gunakan alat Google Maps untuk mendapatkan data yang akurat.
+    `;
+
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              data: imageBase64,
-              mimeType: mimeType,
-            },
-          },
-          {
-            text: 'Remove the background from this image. Keep only the main subject and return it on a transparent background (PNG format with alpha channel). If transparency is not possible, place the subject on a pure white background.',
-          },
-        ],
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        tools: [{ googleMaps: {} }],
+        // Note: No responseMimeType allowed with googleMaps tool
       },
     });
 
-    if (!response.candidates || response.candidates.length === 0) {
-      throw new Error("No response generated from AI.");
-    }
+    const text = response.text || "";
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    const mapUri = groundingChunks?.find(c => c.maps?.uri)?.maps?.uri || MAPS_LINK;
 
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData) {
-        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    // We use a secondary call to structure this data into JSON for our UI
+    const structurer = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `Extract the following store information from this text into JSON format: "${text}". 
+      Required keys: name, address, rating (number), user_ratings_total (number), summary (compelling description in Indonesian), category, opening_hours (array of strings), reviews (array of objects with author and text).`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            address: { type: Type.STRING },
+            rating: { type: Type.NUMBER },
+            user_ratings_total: { type: Type.NUMBER },
+            summary: { type: Type.STRING },
+            category: { type: Type.STRING },
+            opening_hours: { 
+              type: Type.ARRAY, 
+              items: { type: Type.STRING } 
+            },
+            reviews: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  author: { type: Type.STRING },
+                  text: { type: Type.STRING },
+                  rating: { type: Type.NUMBER }
+                }
+              }
+            }
+          }
+        }
       }
-    }
+    });
 
-    throw new Error("AI did not return an image part.");
+    const rawJson = JSON.parse(structurer.text || "{}");
+    
+    return {
+      ...rawJson,
+      mapUri: mapUri,
+      summary: rawJson.summary || "Selamat datang di toko kami. Kami memberikan pelayanan terbaik untuk kebutuhan Anda.",
+      category: rawJson.category || "Toko Kelontong / Bisnis Lokal"
+    };
   } catch (error) {
-    console.error("Error in Gemini background removal:", error);
-    throw error;
+    console.error("Error fetching store data:", error);
+    throw new Error("Gagal mengambil data toko. Pastikan koneksi internet stabil.");
   }
 };

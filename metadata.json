@@ -1,5 +1,7 @@
 {
-  "name": "Remofy - Background Remover",
-  "description": "A modern web application to effortlessly remove backgrounds from your photos using advanced AI technology. Simple, fast, and high-quality results.",
-  "requestFramePermissions": []
+  "name": "StoreFront AI - Modern Store Website",
+  "description": "A high-performance, modern business website generated from Google Maps data.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }
